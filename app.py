@@ -53,7 +53,7 @@ def load_data(file_path):
 
 
 # Chargement du fichier
-EXCEL_FILE = "Inventaire du laboratoire de physique-chimie.xlsx"
+EXCEL_FILE = "Inventaire_laboratoire_physique-chimie.xlsx"
 
 try:
     df = load_data(EXCEL_FILE)
