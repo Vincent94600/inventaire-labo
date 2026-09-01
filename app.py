@@ -5,45 +5,65 @@ st.set_page_config(
     page_title="Inventaire Physique-Chimie", page_icon="🧪", layout="wide"
 )
 
-# Nom de votre fichier Excel (adaptez si besoin)
 EXCEL_FILE = "Inventaire du laboratoire de physique-chimie.xlsx"
 
 
-@st.cache_data
+@st.cache_data(ttl=60)  # Le cache se rafraîchit automatiquement toutes les 60 secondes
 def load_data(file_path):
     xls = pd.ExcelFile(file_path)
     all_data = []
 
     for sheet in xls.sheet_names:
+        df_raw = pd.read_excel(file_path, sheet_name=sheet)
+        if df_raw.empty:
+            continue
+
         if sheet == "Produits chimiques":
             df_sub = pd.read_excel(file_path, sheet_name=sheet, skiprows=5)
-            if df_sub.empty or len(df_sub.columns) < 5:
-                continue
-            df_clean = pd.DataFrame(
-                {
-                    "Désignation": df_sub.iloc[:, 0],
-                    "Salle": "C105 (Chimie)",
-                    "Quantité": df_sub.iloc[:, 4],
-                    "Rangement / Armoire": df_sub.iloc[:, 10]
-                    if len(df_sub.columns) > 10
-                    else "",
-                    "Discipline / Type": df_sub.iloc[:, 3].fillna("Chimie"),
-                    "Commentaires / Détails": df_sub.iloc[:, 1]
-                    .fillna("")
-                    .astype(str)
-                    + " "
-                    + df_sub.iloc[:, 2].fillna("").astype(str),
-                }
-            )
+            if len(df_sub.columns) >= 5:
+                df_clean = pd.DataFrame(
+                    {
+                        "Désignation": df_sub.iloc[:, 0],
+                        "Salle": "C105 (Chimie)",
+                        "Quantité": df_sub.iloc[:, 4],
+                        "Rangement / Armoire": df_sub.iloc[:, 10]
+                        if len(df_sub.columns) > 10
+                        else "",
+                        "Discipline / Type": df_sub.iloc[:, 3].fillna("Chimie"),
+                        "Commentaires / Détails": df_sub.iloc[:, 1]
+                        .fillna("")
+                        .astype(str)
+                        + " "
+                        + df_sub.iloc[:, 2].fillna("").astype(str),
+                    }
+                )
+                all_data.append(df_clean)
         else:
-            df_sub = pd.read_excel(file_path, sheet_name=sheet, skiprows=1)
-            if df_sub.empty or len(df_sub.columns) < 2:
+            # Détection dynamique de la ligne d'en-tête "Désignation"
+            header_idx = None
+            for idx, row in df_raw.iterrows():
+                row_str = row.astype(str).str.lower().to_string()
+                if "désignation" in row_str or "materiel" in row_str:
+                    header_idx = idx
+                    break
+
+            if header_idx is not None:
+                df_sub = pd.read_excel(
+                    file_path, sheet_name=sheet, skiprows=header_idx + 1
+                )
+            else:
+                df_sub = df_raw
+
+            if df_sub.empty or len(df_sub.columns) < 1:
                 continue
+
             df_clean = pd.DataFrame(
                 {
                     "Désignation": df_sub.iloc[:, 0],
                     "Salle": sheet,
-                    "Quantité": df_sub.iloc[:, 1],
+                    "Quantité": df_sub.iloc[:, 1]
+                    if len(df_sub.columns) > 1
+                    else "",
                     "Rangement / Armoire": df_sub.iloc[:, 2]
                     if len(df_sub.columns) > 2
                     else "",
@@ -55,17 +75,23 @@ def load_data(file_path):
                     else "",
                 }
             )
+            all_data.append(df_clean)
 
-        all_data.append(df_clean)
+    if not all_data:
+        return pd.DataFrame()
 
     full_df = pd.concat(all_data, ignore_index=True)
     full_df.dropna(subset=["Désignation"], inplace=True)
-    # Nettoyage des sous-titres d'en-tête
+
+    # Nettoyage des lignes de titre résiduelles
     full_df = full_df[
         ~full_df["Désignation"]
         .astype(str)
-        .str.startswith("Désignation du matériel")
+        .str.strip()
+        .str.lower()
+        .str.startswith("désignation")
     ]
+    full_df = full_df[full_df["Désignation"].astype(str).str.strip() != ""]
     return full_df
 
 
@@ -74,18 +100,20 @@ try:
     df = load_data(EXCEL_FILE)
 except Exception as e:
     st.error(f"❌ Erreur lors du chargement : `{e}`")
-    st.info(
-        "Vérifiez que le fichier Excel est bien au même endroit que `app.py` et que le nom correspond exactement."
-    )
     st.stop()
 
 # --- INTERFACE ---
 st.title("🧪 Inventaire du Laboratoire de Physique-Chimie")
 
+# Bouton de rafraîchissement manuel
+if st.button("🔄 Actualiser les données"):
+    st.cache_data.clear()
+    st.rerun()
+
 # Recherche globale
 search_term = st.text_input("🔍 Rechercher un matériel, produit ou armoire...")
 
-# Filtres dans la barre latérale
+# Filtres
 st.sidebar.header("🎯 Filtres")
 salles = ["Toutes"] + list(df["Salle"].unique())
 salle_filtre = st.sidebar.selectbox("Salle", salles)
@@ -107,8 +135,5 @@ if search_term:
     )
     df = df[mask]
 
-# Affichage du nombre de résultats
 st.write(f"**{len(df)}** élément(s) trouvé(s)")
-
-# Affichage du tableau
 st.dataframe(df, use_container_width=True, hide_index=True)
